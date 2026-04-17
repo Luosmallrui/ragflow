@@ -21,10 +21,11 @@ import secrets
 import time
 from datetime import datetime
 import base64
-
+from common.misc_utils import get_uuid
 from quart import make_response, redirect, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
-
+import requests
+import urllib.parse
 from api.apps.auth import get_auth_client
 from api.db import FileType, UserTenantRole
 from api.db.db_models import TenantLLM
@@ -59,6 +60,9 @@ from api.utils.web_utils import (
     captcha_key,
 )
 from common import settings
+
+LAVA_USERINFO_URL = "http://127.0.0.1:10032/LAVAPlatform/permission/getCurrentUserInfo"
+from common.constants import StatusEnum
 
 
 @manager.route("/auth/login", methods=["POST"])  # noqa: F821
@@ -137,6 +141,67 @@ async def login():
             message="Email and password do not match!",
         )
 
+
+@manager.route('/sso/callback', methods=['GET'])
+async def sso_callback():
+    token = request.args.get('token', '').strip()
+    if not token:
+        return redirect('http://localhost:9222/login?error=missing_token')
+
+    try:
+        resp = requests.get(
+            LAVA_USERINFO_URL,
+            headers={"Accept": "application/json", "Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        result = resp.json()
+    except Exception:
+        return redirect('http://localhost:9222/login?error=auth_failed')
+
+    if not result.get('success'):
+        return redirect('http://localhost:9222/login?error=auth_denied')
+
+    user_data = result['data']['User']
+    login_name = user_data.get('login_name')
+    real_name = user_data.get('name') or login_name
+
+    if user_data.get('logon_lock') or not user_data.get('logon_enabled'):
+        return redirect('http://localhost:9222/login?error=account_locked')
+
+    email = f"{login_name}@sso.internal"
+    users = UserService.query(email=email, status=StatusEnum.VALID.value)
+
+    if not users:
+        # 用 user_register 创建用户+tenant，和正常注册流程一致
+        user_id = get_uuid()
+        user_info = {
+            "email": email,
+            "nickname": real_name,
+            "password": "",
+            "login_channel": "sso",
+            "status": StatusEnum.VALID.value,
+            "is_superuser": False,
+        }
+        user = user_register(user_id, user_info)
+        if not user:
+            return redirect('http://localhost:9222/login?error=create_user_failed')
+        users = UserService.query(email=email, status=StatusEnum.VALID.value)
+        if not users:
+            return redirect('http://localhost:9222/login?error=create_user_failed')
+
+    user = users[0]
+
+    # 生成 access_token，和正常登录流程一致
+    user.access_token = get_uuid()
+    login_user(user)
+    user.update_time = current_timestamp()
+    user.update_date = datetime_format(datetime.now())
+    user.save()
+
+    jwt_token = user.get_id()
+
+    params = urllib.parse.urlencode({'auth': jwt_token})
+    return redirect(f'http://localhost:9222/login?{params}')
 
 @manager.route("/auth/login/channels", methods=["GET"])  # noqa: F821
 async def get_login_channels():
@@ -648,7 +713,7 @@ async def forget_get_captcha():
     # Generate captcha text
     allowed = string.ascii_uppercase + string.digits
     captcha_text = "".join(secrets.choice(allowed) for _ in range(OTP_LENGTH))
-    REDIS_CONN.set(captcha_key(email), captcha_text, 60) # Valid for 60 seconds
+    REDIS_CONN.set(captcha_key(email), captcha_text, 60)  # Valid for 60 seconds
 
     from captcha.image import ImageCaptcha
     image = ImageCaptcha(width=300, height=120, font_sizes=[50, 60, 70])
@@ -695,7 +760,8 @@ async def forget_send_otp():
             elapsed = RESEND_COOLDOWN_SECONDS
         remaining = RESEND_COOLDOWN_SECONDS - elapsed
         if remaining > 0:
-            return get_json_result(data=False, code=RetCode.NOT_EFFECTIVE, message=f"you still have to wait {remaining} seconds")
+            return get_json_result(data=False, code=RetCode.NOT_EFFECTIVE,
+                                   message=f"you still have to wait {remaining} seconds")
 
     # Generate OTP (uppercase letters only) and store hashed
     otp = "".join(secrets.choice(string.ascii_uppercase) for _ in range(OTP_LENGTH))
@@ -800,7 +866,7 @@ async def forget_reset_password():
     - auto login
     - clear verified flag
     """
-    
+
     req = await get_request_json()
     email = req.get("email") or ""
     new_pwd = req.get("new_password")
@@ -822,7 +888,7 @@ async def forget_reset_password():
     users = UserService.query_user_by_email(email=email)
     if not users:
         return get_json_result(data=False, code=RetCode.DATA_ERROR, message="invalid email")
-    
+
     user = users[0]
     try:
         UserService.update_user_password(user.id, new_pwd_base64)
@@ -838,5 +904,3 @@ async def forget_reset_password():
 
     msg = "Password reset successful. Logged in."
     return await construct_response(data=user.to_json(), auth=user.get_id(), message=msg)
-
-
