@@ -60,14 +60,21 @@ from api.utils.web_utils import (
     captcha_key,
 )
 from common import settings
-
-LAVA_USERINFO_URL = "http://127.0.0.1:10032/LAVAPlatform/permission/getCurrentUserInfo"
+from common.http_client import async_request
 from common.constants import StatusEnum
+
+import os
+
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:9222')
+LAVA_USERINFO_URL = os.environ.get(
+    'LAVA_USERINFO_URL',
+    'http://10.210.162.32/LAVAPlatform/permission/getCurrentUserInfo'
+)
 
 
 @manager.route("/auth/login", methods=["POST"])  # noqa: F821
 async def login():
-    """
+    """  Key:   []byte("user_101"),   
     User login endpoint.
     ---
     tags:
@@ -145,53 +152,65 @@ async def login():
 @manager.route('/sso/callback', methods=['GET'])
 async def sso_callback():
     token = request.args.get('token', '').strip()
-    if not token:
-        return redirect('http://localhost:9222/login?error=missing_token')
+    employee_id = request.args.get('employee_id', '').strip()
+    display_name = request.args.get('display_name', '').strip()
 
-    try:
-        resp = requests.get(
-            LAVA_USERINFO_URL,
-            headers={"Accept": "application/json", "Authorization": f"Bearer {token}"},
-            timeout=10
-        )
-        result = resp.json()
-    except Exception:
-        return redirect('http://localhost:9222/login?error=auth_failed')
+    if token:
+        # 方式一：token 鉴权
+        try:
+            resp = requests.get(
+                LAVA_USERINFO_URL,
+                headers={"Accept": "application/json", "Authorization": f"Bearer {token}"},
+                timeout=10
+            )
+            result = resp.json()
+        except Exception:
+            return redirect(f'{FRONTEND_URL}/login?error=auth_failed')
 
-    if not result.get('success'):
-        return redirect('http://localhost:9222/login?error=auth_denied')
+        if not result.get('success'):
+            return redirect(f'{FRONTEND_URL}/login?error=auth_denied')
 
-    user_data = result['data']['User']
-    login_name = user_data.get('login_name')
-    real_name = user_data.get('name') or login_name
+        user_data = result['data']['User']
+        employee_id = user_data.get('login_name')  # 工号从接口返回
+        display_name = user_data.get('name') or employee_id
 
-    if user_data.get('logon_lock') or not user_data.get('logon_enabled'):
-        return redirect('http://localhost:9222/login?error=account_locked')
+        if user_data.get('logon_lock') or not user_data.get('logon_enabled'):
+            return redirect(f'{FRONTEND_URL}/login?error=account_locked')
 
-    email = f"{login_name}@sso.internal"
+    elif employee_id and display_name:
+        # 方式二：工号 + 姓名直接登录
+        pass
+
+    else:
+        # 方式三：都没有，跳普通登录
+        return redirect(f'{FRONTEND_URL}/login')
+
+    # 工号作为唯一标识生成邮箱
+    email = f"{employee_id}@sso.internal"
     users = UserService.query(email=email, status=StatusEnum.VALID.value)
 
     if not users:
-        # 用 user_register 创建用户+tenant，和正常注册流程一致
         user_id = get_uuid()
-        user_info = {
+        user = user_register(user_id, {
             "email": email,
-            "nickname": real_name,
+            "nickname": display_name,
             "password": "",
             "login_channel": "sso",
             "status": StatusEnum.VALID.value,
             "is_superuser": False,
-        }
-        user = user_register(user_id, user_info)
+        })
         if not user:
-            return redirect('http://localhost:9222/login?error=create_user_failed')
+            return redirect(f'{FRONTEND_URL}/login?error=create_user_failed')
         users = UserService.query(email=email, status=StatusEnum.VALID.value)
         if not users:
-            return redirect('http://localhost:9222/login?error=create_user_failed')
+            return redirect(f'{FRONTEND_URL}/login?error=create_user_failed')
 
     user = users[0]
 
-    # 生成 access_token，和正常登录流程一致
+    # 更新姓名（工号对应的人名可能会改）
+    if user.nickname != display_name:
+        user.nickname = display_name
+
     user.access_token = get_uuid()
     login_user(user)
     user.update_time = current_timestamp()
@@ -199,9 +218,9 @@ async def sso_callback():
     user.save()
 
     jwt_token = user.get_id()
-
     params = urllib.parse.urlencode({'auth': jwt_token})
-    return redirect(f'http://localhost:9222/login?{params}')
+    return redirect(f'{FRONTEND_URL}/login?{params}')
+
 
 @manager.route("/auth/login/channels", methods=["GET"])  # noqa: F821
 async def get_login_channels():
