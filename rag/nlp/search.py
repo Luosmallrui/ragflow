@@ -339,14 +339,12 @@ class Dealer:
     def _rank_feature_scores(self, query_rfea, search_res):
         import time
         import math
-
+        logging.warning(f"[RankScore Debug] query_rfea={query_rfea}")
         rank_fea = []
         pageranks = []
         time_weights = []
         importance_weights = []
         custom_weights = []
-
-        importance_map = {1: 0.8, 2: 0.9, 3: 1.0}  # 三个等级
 
         for chunk_id in search_res.ids:
             field = search_res.field[chunk_id]
@@ -354,28 +352,30 @@ class Dealer:
             # 原有 pagerank
             pageranks.append(field.get(PAGERANK_FLD, 0))
 
-            # 入库时间权重 (0.8~1.0)
-            create_ts = field.get("create_timestamp_flt", 0) or 0
+            # 入库时间权重 从 query_rfea 取 time_weight 系数
+            kb_time_weight = (query_rfea or {}).get("time_weight", 0)
+            create_ts = float(field.get("create_timestamp_flt", 0) or 0)
             days_old = (time.time() - create_ts) / 86400
-            decay = 0.8 + 0.2 * math.exp(-0.01 * days_old)  # 新文档→1.0，旧文档→0.8
-            time_weights.append(decay)
+            decay = 0.8 + 0.2 * math.exp(-0.01 * days_old)
+            time_weights.append(kb_time_weight * decay)
 
-            # 重要性等级权重 (1→0.8, 2→0.9, 3→1.0)
-            level = field.get("importance_level", 2)  # 默认中等
-            importance_weights.append(importance_map.get(level, 0.9))
-
-            # 自定义权重
-            custom_weights.append(field.get("custom_weight", 1.0) or 1.0)
+            # 从 query_rfea 取，不是从 chunk field 取
+            importance_weights.append((query_rfea or {}).get("importance_level", 0))
+            custom_weights.append((query_rfea or {}).get("custom_weight", 0))
 
         pageranks = np.array(pageranks, dtype=float)
         time_weights = np.array(time_weights, dtype=float)
         importance_weights = np.array(importance_weights, dtype=float)
         custom_weights = np.array(custom_weights, dtype=float)
 
-        extra = time_weights + importance_weights + custom_weights  # 三项相加
+        extra = time_weights + importance_weights + custom_weights
 
         if not query_rfea:
-            return np.zeros(len(search_res.ids)) + pageranks + extra
+            final_scores = np.zeros(len(search_res.ids)) + pageranks + extra
+            logging.info(
+                f"[RankScore] pageranks={pageranks.tolist()} extra={extra.tolist()} final={final_scores.tolist()}"
+            )
+            return final_scores
 
         q_denor = np.sqrt(np.sum([s * s for t, s in query_rfea.items() if t != PAGERANK_FLD]))
         if q_denor == 0:
@@ -398,7 +398,13 @@ class Dealer:
             else:
                 rank_fea.append(nor / np.sqrt(denor) / q_denor)
 
-        return np.array(rank_fea) * 10. + pageranks + extra
+        final_scores = np.array(rank_fea) * 10. + pageranks + extra
+
+        logging.info(
+            f"[RankScore] pageranks={pageranks.tolist()} extra={extra.tolist()} rank_fea={np.array(rank_fea).tolist()} final={final_scores.tolist()}"
+        )
+
+        return final_scores
 
     async def _knn_scores(self, sres: "Dealer.SearchResult",
                           idx_names: str | list[str],
@@ -511,6 +517,7 @@ class Dealer:
                vtweight=0.7, cfield="content_ltks",
                rank_feature: dict | None = None
                ):
+        logging.warning(f"[Rerank] 进入rerank ids数量={len(sres.ids)}")
         _, keywords = self.qryr.question(query)
         vector_size = len(sres.query_vector)
         vector_column = f"q_{vector_size}_vec"
@@ -543,6 +550,8 @@ class Dealer:
                                                         ins_embd,
                                                         keywords,
                                                         ins_tw, tkweight, vtweight)
+        final = sim + rank_fea
+        logging.warning(f"[FinalScore] sim={sim.tolist()} rank_fea={rank_fea.tolist()} final={final.tolist()}")
 
         return sim + rank_fea, tksim, vtsim
 
