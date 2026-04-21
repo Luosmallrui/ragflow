@@ -1,7 +1,10 @@
 import { AvatarUpload } from '@/components/avatar-upload';
+import CustomWeightFormField from '@/components/custom-weight-form-field.tsx';
+import ImportanceLevelFormField from '@/components/importance-level-form-field.tsx';
 import { SelectWithSearch } from '@/components/originui/select-with-search';
 import PageRankFormField from '@/components/page-rank-form-field';
 import { RAGFlowFormItem } from '@/components/ragflow-form';
+import TimeWeightFormField from '@/components/time-weight-form-field.tsx';
 import {
   FormControl,
   FormField,
@@ -15,8 +18,6 @@ import { useMemo } from 'react';
 import { useFormContext } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { TagItems } from './components/tag-item';
-import { EmbeddingModelItem } from './configuration/common-item';
-import { PermissionFormField } from './permission-form-field';
 
 export function GeneralForm() {
   const form = useFormContext();
@@ -123,10 +124,10 @@ export function GeneralForm() {
           );
         }}
       />
-      <PermissionFormField></PermissionFormField>
-      <EmbeddingModelItem isEdit={true}></EmbeddingModelItem>
-      <PageRankFormField></PageRankFormField>
-
+      <PageRankFormField />
+      <TimeWeightFormField /> {/* 入库时间权重 */}
+      <ImportanceLevelFormField /> {/* 重要性等级 */}
+      <CustomWeightFormField />
       <TagItems></TagItems>
     </>
   );

@@ -870,6 +870,9 @@ class Knowledgebase(DataBaseModel):
     pipeline_id = CharField(max_length=32, null=True, help_text="Pipeline ID", index=True)
     parser_config = JSONField(null=False, default={"pages": [[1, 1000000]], "table_context_size": 0, "image_context_size": 0})
     pagerank = IntegerField(default=0, index=False)
+    time_weight = FloatField(default=0.0)  # 入库时间权重
+    importance_level = FloatField(default=0.0)  # 重要性等级 1/2/3
+    custom_weight = FloatField(default=0.0)  # 自定义权重
 
     graphrag_task_id = CharField(max_length=32, null=True, help_text="Graph RAG task ID", index=True)
     graphrag_task_finish_at = DateTimeField(null=True)

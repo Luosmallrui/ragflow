@@ -281,6 +281,9 @@ class KnowledgebaseService(CommonService):
             UserCanvas.avatar.alias("pipeline_avatar"),
             cls.model.parser_config,
             cls.model.pagerank,
+            cls.model.time_weight,  # ← 新增
+            cls.model.importance_level,  # ← 新增
+            cls.model.custom_weight,  # ← 新增
             cls.model.graphrag_task_id,
             cls.model.graphrag_task_finish_at,
             cls.model.raptor_task_id,

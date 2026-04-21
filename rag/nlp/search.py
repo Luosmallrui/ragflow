@@ -31,6 +31,7 @@ from common import settings
 
 from common.misc_utils import thread_pool_exec
 
+
 def index_name(uid): return f"ragflow_{uid}"
 
 
@@ -130,11 +131,11 @@ class Dealer:
         return condition
 
     async def search(self, req, idx_names: str | list[str],
-               kb_ids: list[str],
-               emb_mdl=None,
-               highlight: bool | list | None = None,
-               rank_feature: dict | None = None
-               ):
+                     kb_ids: list[str],
+                     emb_mdl=None,
+                     highlight: bool | list | None = None,
+                     rank_feature: dict | None = None
+                     ):
         if highlight is None:
             highlight = False
 
@@ -173,8 +174,9 @@ class Dealer:
             matchText, keywords = self.qryr.question(qst, min_match=0.3)
             if emb_mdl is None:
                 matchExprs = [matchText]
-                res = await thread_pool_exec(self.dataStore.search, src, highlightFields, filters, matchExprs, orderBy, offset, limit,
-                                            idx_names, kb_ids, rank_feature=rank_feature)
+                res = await thread_pool_exec(self.dataStore.search, src, highlightFields, filters, matchExprs, orderBy,
+                                             offset, limit,
+                                             idx_names, kb_ids, rank_feature=rank_feature)
                 total = self.dataStore.get_total(res)
                 logging.debug("Dealer.search TOTAL: {}".format(total))
             else:
@@ -192,22 +194,25 @@ class Dealer:
                 fusionExpr = FusionExpr("weighted_sum", topk, {"weights": "0.05,0.95"})
                 matchExprs = [matchText, matchDense, fusionExpr]
 
-                res = await thread_pool_exec(self.dataStore.search, src, highlightFields, filters, matchExprs, orderBy, offset, limit,
-                                            idx_names, kb_ids, rank_feature=rank_feature)
+                res = await thread_pool_exec(self.dataStore.search, src, highlightFields, filters, matchExprs, orderBy,
+                                             offset, limit,
+                                             idx_names, kb_ids, rank_feature=rank_feature)
                 total = self.dataStore.get_total(res)
                 logging.debug("Dealer.search TOTAL: {}".format(total))
 
                 # If result is empty, try again with lower min_match
                 if total == 0:
                     if filters.get("doc_id"):
-                        res = await thread_pool_exec(self.dataStore.search, src, [], filters, [], orderBy, offset, limit, idx_names, kb_ids)
+                        res = await thread_pool_exec(self.dataStore.search, src, [], filters, [], orderBy, offset,
+                                                     limit, idx_names, kb_ids)
                         total = self.dataStore.get_total(res)
                     else:
                         matchText, _ = self.qryr.question(qst, min_match=0.1)
                         matchDense.extra_options["similarity"] = 0.17
-                        res = await thread_pool_exec(self.dataStore.search, src, highlightFields, filters, [matchText, matchDense, fusionExpr],
-                                                    orderBy, offset, limit, idx_names, kb_ids,
-                                                    rank_feature=rank_feature)
+                        res = await thread_pool_exec(self.dataStore.search, src, highlightFields, filters,
+                                                     [matchText, matchDense, fusionExpr],
+                                                     orderBy, offset, limit, idx_names, kb_ids,
+                                                     rank_feature=rank_feature)
                         total = self.dataStore.get_total(res)
                     logging.debug("Dealer.search 2 TOTAL: {}".format(total))
 
@@ -332,15 +337,45 @@ class Dealer:
         return res, seted
 
     def _rank_feature_scores(self, query_rfea, search_res):
-        ## For rank feature(tag_fea) scores.
+        import time
+        import math
+
         rank_fea = []
         pageranks = []
+        time_weights = []
+        importance_weights = []
+        custom_weights = []
+
+        importance_map = {1: 0.8, 2: 0.9, 3: 1.0}  # 三个等级
+
         for chunk_id in search_res.ids:
-            pageranks.append(search_res.field[chunk_id].get(PAGERANK_FLD, 0))
+            field = search_res.field[chunk_id]
+
+            # 原有 pagerank
+            pageranks.append(field.get(PAGERANK_FLD, 0))
+
+            # 入库时间权重 (0.8~1.0)
+            create_ts = field.get("create_timestamp_flt", 0) or 0
+            days_old = (time.time() - create_ts) / 86400
+            decay = 0.8 + 0.2 * math.exp(-0.01 * days_old)  # 新文档→1.0，旧文档→0.8
+            time_weights.append(decay)
+
+            # 重要性等级权重 (1→0.8, 2→0.9, 3→1.0)
+            level = field.get("importance_level", 2)  # 默认中等
+            importance_weights.append(importance_map.get(level, 0.9))
+
+            # 自定义权重
+            custom_weights.append(field.get("custom_weight", 1.0) or 1.0)
+
         pageranks = np.array(pageranks, dtype=float)
+        time_weights = np.array(time_weights, dtype=float)
+        importance_weights = np.array(importance_weights, dtype=float)
+        custom_weights = np.array(custom_weights, dtype=float)
+
+        extra = time_weights + importance_weights + custom_weights  # 三项相加
 
         if not query_rfea:
-            return np.array([0 for _ in range(len(search_res.ids))]) + pageranks
+            return np.zeros(len(search_res.ids)) + pageranks + extra
 
         q_denor = np.sqrt(np.sum([s * s for t, s in query_rfea.items() if t != PAGERANK_FLD]))
         if q_denor == 0:
@@ -362,7 +397,8 @@ class Dealer:
                 rank_fea.append(0)
             else:
                 rank_fea.append(nor / np.sqrt(denor) / q_denor)
-        return np.array(rank_fea) * 10. + pageranks
+
+        return np.array(rank_fea) * 10. + pageranks + extra
 
     async def _knn_scores(self, sres: "Dealer.SearchResult",
                           idx_names: str | list[str],
@@ -837,7 +873,8 @@ class Dealer:
         return {a.replace(".", "_"): max(1, c) for a, c in tag_fea}
 
     async def retrieval_by_toc(self, query: str, chunks: list[dict], tenant_ids: list[str], chat_mdl, topn: int = 6):
-        from rag.prompts.generator import relevant_chunks_with_toc # moved from the top of the file to avoid circular import
+        from rag.prompts.generator import \
+            relevant_chunks_with_toc  # moved from the top of the file to avoid circular import
         if not chunks:
             return []
         idx_nms = [index_name(tid) for tid in tenant_ids]

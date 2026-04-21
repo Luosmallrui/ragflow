@@ -64,6 +64,9 @@ export const useFetchKnowledgeConfigurationOnMount = (
         'parser_config',
         'connectors',
         'pagerank',
+        'time_weight', // ← 新增
+        'importance_level', // ← 新增
+        'custom_weight', // ← 新增
         'avatar',
       ]),
       embedding_model: knowledgeDetails.embedding_model,

@@ -118,6 +118,9 @@ export const formSchema = z
       })
       .optional(),
     pagerank: z.number(),
+    time_weight: z.number().min(0).max(1).default(0),
+    importance_level: z.number().min(0).max(1).default(0),
+    custom_weight: z.number().min(0).max(1).default(0),
     connectors: z
       .array(
         z.object({
