@@ -148,44 +148,77 @@ async def login():
             message="Email and password do not match!",
         )
 
+AES_KEY = b"Comac.0000000000"
+from Crypto.Cipher import AES
+
+def decrypt_token(encrypted_token: str) -> dict:
+    # URL-safe Base64 解码
+    encrypted_bytes = base64.urlsafe_b64decode(encrypted_token + '==')  # 补padding
+
+    # AES ECB 解密（Java 默认 AES/ECB/PKCS5Padding）
+    cipher = AES.new(AES_KEY, AES.MODE_ECB)
+    decrypted_bytes = cipher.decrypt(encrypted_bytes)
+
+    # 去除 PKCS5 padding
+    pad_len = decrypted_bytes[-1]
+    decrypted_bytes = decrypted_bytes[:-pad_len]
+
+    return json.loads(decrypted_bytes.decode('utf-8'))
 
 @manager.route('/sso/callback', methods=['GET'])
 async def sso_callback():
     token = request.args.get('token', '').strip()
-    employee_id = request.args.get('employee_id', '').strip()
-    display_name = request.args.get('display_name', '').strip()
 
-    if token:
-        # 方式一：token 鉴权
+    if not token:
+        return redirect(f'{FRONTEND_URL}/login')
+
+    # ── 判断是甲方加密 token 还是 Bearer token ──
+    # 甲方加密 token 解密后是 JSON，Bearer token 走接口验证
+    # 可以约定：加密token用 ?token=xxx，Bearer用 ?auth_token=xxx
+    # 或者 try 解密，失败则走 Bearer 流程
+
+    employee_id = None
+    display_name = None
+
+    # 尝试当作甲方加密 token 解密
+    try:
+        payload = decrypt_token(token)
+        # Java 那边 put 的是 "username": "u"+userNum
+        raw_username = payload.get('username', '')
+        employee_id = raw_username.lstrip('u')  # 去掉前缀 'u'
+        display_name = payload.get('department_name') or employee_id
+
+        # 校验时间戳，防重放攻击（5分钟内有效）
+        timestamp = payload.get('timestamp', 0)
+        if abs(time.time() * 1000 - timestamp) > 5 * 60 * 1000:
+            return redirect(f'{FRONTEND_URL}/login?error=token_expired')
+
+    except Exception:
+        # 解密失败，走原来的 Bearer token 流程
         try:
             resp = requests.get(
                 LAVA_USERINFO_URL,
-                headers={"Accept": "application/json", "Authorization": f"Bearer {token}"},
+                headers={"Authorization": f"Bearer {token}"},
                 timeout=10
             )
             result = resp.json()
+            if not result.get('success'):
+                return redirect(f'{FRONTEND_URL}/login?error=auth_denied')
+
+            user_data = result['data']['User']
+            employee_id = user_data.get('login_name')
+            display_name = user_data.get('name') or employee_id
+
+            if user_data.get('logon_lock') or not user_data.get('logon_enabled'):
+                return redirect(f'{FRONTEND_URL}/login?error=account_locked')
+
         except Exception:
             return redirect(f'{FRONTEND_URL}/login?error=auth_failed')
 
-        if not result.get('success'):
-            return redirect(f'{FRONTEND_URL}/login?error=auth_denied')
+    if not employee_id:
+        return redirect(f'{FRONTEND_URL}/login?error=missing_user')
 
-        user_data = result['data']['User']
-        employee_id = user_data.get('login_name')  # 工号从接口返回
-        display_name = user_data.get('name') or employee_id
-
-        if user_data.get('logon_lock') or not user_data.get('logon_enabled'):
-            return redirect(f'{FRONTEND_URL}/login?error=account_locked')
-
-    elif employee_id and display_name:
-        # 方式二：工号 + 姓名直接登录
-        pass
-
-    else:
-        # 方式三：都没有，跳普通登录
-        return redirect(f'{FRONTEND_URL}/login')
-
-    # 工号作为唯一标识生成邮箱
+    # ── 以下逻辑不变 ──
     email = f"{employee_id}@sso.internal"
     users = UserService.query(email=email, status=StatusEnum.VALID.value)
 
@@ -206,8 +239,6 @@ async def sso_callback():
             return redirect(f'{FRONTEND_URL}/login?error=create_user_failed')
 
     user = users[0]
-
-    # 更新姓名（工号对应的人名可能会改）
     if user.nickname != display_name:
         user.nickname = display_name
 
