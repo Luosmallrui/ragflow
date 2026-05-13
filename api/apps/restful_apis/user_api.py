@@ -172,23 +172,28 @@ async def sso_callback():
     if not token:
         return redirect(f'{FRONTEND_URL}/login')
 
-    # ── 判断是甲方加密 token 还是 Bearer token ──
-    # 甲方加密 token 解密后是 JSON，Bearer token 走接口验证
-    # 可以约定：加密token用 ?token=xxx，Bearer用 ?auth_token=xxx
-    # 或者 try 解密，失败则走 Bearer 流程
-
     employee_id = None
     display_name = None
+    department_name = ''
+    nickname = None
 
-    # 尝试当作甲方加密 token 解密
     try:
         payload = decrypt_token(token)
-        # Java 那边 put 的是 "username": "u"+userNum
-        raw_username = payload.get('username', '')
-        employee_id = raw_username.lstrip('u')  # 去掉前缀 'u'
-        display_name = payload.get('department_name') or employee_id
 
-        # 校验时间戳，防重放攻击（5分钟内有效）
+        # 甲方加密 token 字段
+        employee_id = str(payload.get('usernumber', '')).strip()          # 工号
+        display_name = str(payload.get('username', '')).strip()           # 姓名
+        department_name = str(payload.get('department_name', '')).strip() # 部门名
+
+        if not employee_id:
+            return redirect(f'{FRONTEND_URL}/login?error=missing_usernumber')
+
+        if not display_name:
+            display_name = employee_id
+
+        nickname = f"{display_name}（{department_name}）" if department_name else display_name
+
+        # 校验时间戳，5 分钟内有效
         timestamp = payload.get('timestamp', 0)
         if abs(time.time() * 1000 - timestamp) > 5 * 60 * 1000:
             return redirect(f'{FRONTEND_URL}/login?error=token_expired')
@@ -202,12 +207,14 @@ async def sso_callback():
                 timeout=10
             )
             result = resp.json()
+
             if not result.get('success'):
                 return redirect(f'{FRONTEND_URL}/login?error=auth_denied')
 
             user_data = result['data']['User']
             employee_id = user_data.get('login_name')
             display_name = user_data.get('name') or employee_id
+            nickname = display_name
 
             if user_data.get('logon_lock') or not user_data.get('logon_enabled'):
                 return redirect(f'{FRONTEND_URL}/login?error=account_locked')
@@ -218,7 +225,9 @@ async def sso_callback():
     if not employee_id:
         return redirect(f'{FRONTEND_URL}/login?error=missing_user')
 
-    # ── 以下逻辑不变 ──
+    if not nickname:
+        nickname = employee_id
+
     email = f"{employee_id}@sso.internal"
     users = UserService.query(email=email, status=StatusEnum.VALID.value)
 
@@ -226,21 +235,25 @@ async def sso_callback():
         user_id = get_uuid()
         user = user_register(user_id, {
             "email": email,
-            "nickname": display_name,
+            "nickname": nickname,
             "password": "",
             "login_channel": "sso",
             "status": StatusEnum.VALID.value,
             "is_superuser": False,
         })
+
         if not user:
             return redirect(f'{FRONTEND_URL}/login?error=create_user_failed')
+
         users = UserService.query(email=email, status=StatusEnum.VALID.value)
+
         if not users:
             return redirect(f'{FRONTEND_URL}/login?error=create_user_failed')
 
     user = users[0]
-    if user.nickname != display_name:
-        user.nickname = display_name
+
+    if user.nickname != nickname:
+        user.nickname = nickname
 
     user.access_token = get_uuid()
     login_user(user)
@@ -250,8 +263,8 @@ async def sso_callback():
 
     jwt_token = user.get_id()
     params = urllib.parse.urlencode({'auth': jwt_token})
-    return redirect(f'{FRONTEND_URL}/login?{params}')
 
+    return redirect(f'{FRONTEND_URL}/login?{params}')
 
 @manager.route("/auth/login/channels", methods=["GET"])  # noqa: F821
 async def get_login_channels():
