@@ -56,6 +56,8 @@ from rag.prompts.generator import keyword_extraction, question_proposal, content
     gen_metadata
 import logging
 import os
+import subprocess
+import tempfile
 from datetime import datetime
 import json
 import xxhash
@@ -295,6 +297,92 @@ async def build_chunks(task, progress_callback):
             f"mode={parser_config_for_chunk.get('table_column_mode')}, "
             f"roles_keys={list((parser_config_for_chunk.get('table_column_roles') or {}).keys())}"
         )
+
+    parser_config = task["parser_config"] or {}
+    if parser_config.get("preprocess_on_creation") and parser_config.get("preprocess_script"):
+        script_path = parser_config["preprocess_script"]
+        if script_path and os.path.isfile(script_path):
+            try:
+                ext = os.path.splitext(task["name"])[1] if task["name"] else ""
+                with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp_in:
+                    tmp_in.write(binary)
+                    input_path = tmp_in.name
+                output_path = input_path + ".md"
+                tmp_files = [input_path, output_path]
+                api_base = parser_config.get("preprocess_api_base", "")
+                api_key = parser_config.get("preprocess_api_key", "")
+                model_name = parser_config.get("preprocess_model_name", "")
+                cmd = [sys.executable, "-u", script_path, input_path, output_path]
+                if api_base:
+                    cmd.append(api_base)
+                if api_key:
+                    cmd.append(api_key)
+                if model_name:
+                    cmd.append(model_name)
+                logging.info("Running preprocess script: {}".format(" ".join(cmd)))
+                progress_callback(0.05, "Running preprocess script...")
+
+                def run_preprocess():
+                    proc = subprocess.Popen(
+                        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        text=True, bufsize=1
+                    )
+
+                    def read_stdout():
+                        for line in proc.stdout:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            if line.startswith("PROGRESS:"):
+                                parts = line.split(":", 2)
+                                try:
+                                    prog = float(parts[1])
+                                    msg = parts[2] if len(parts) > 2 else "Processing..."
+                                    set_progress(task["id"], prog=0.1 + prog * 0.8, msg="[Preprocess] " + msg)
+                                except (ValueError, IndexError):
+                                    logging.info("[Preprocess] {}".format(line))
+                            else:
+                                set_progress(task["id"], prog=None, msg="[Preprocess] " + line[:200])
+
+                    reader = threading.Thread(target=read_stdout, daemon=True)
+                    reader.start()
+                    proc.wait()
+                    reader.join(timeout=5)
+                    return proc.returncode, proc.stderr.read() if proc.stderr else ""
+
+                retcode, stderr = await asyncio.to_thread(run_preprocess)
+                if retcode != 0:
+                    logging.error("Preprocess script failed: {}".format(stderr))
+                    progress_callback(-1, "Preprocess script failed: {}".format(stderr[:500]))
+                    raise RuntimeError("Preprocess script failed")
+                if os.path.isfile(output_path):
+                    with open(output_path, "rb") as f:
+                        binary = f.read()
+                    new_name = os.path.splitext(task["name"])[0] + ".md" if task["name"] else "preprocessed.md"
+                    new_location = os.path.splitext(task["location"])[0] + ".md" if task["location"] else "preprocessed.md"
+                    try:
+                        settings.STORAGE_IMPL.put(bucket, new_location, binary, task["tenant_id"])
+                        logging.info("Preprocess: uploaded {} to MinIO({}/{})".format(new_name, bucket, new_location))
+                    except Exception as e:
+                        logging.error("Preprocess: failed to upload to MinIO: {}".format(e))
+                    DocumentService.update_by_id(task["doc_id"], {"location": new_location, "name": new_name})
+                    task["name"] = new_name
+                    task["location"] = new_location
+                    logging.info("Preprocess done, new file: {}".format(task["name"]))
+                else:
+                    logging.warning("Preprocess script did not produce output file: {}".format(output_path))
+            except Exception as e:
+                logging.exception("Preprocess script error")
+                progress_callback(-1, "Preprocess script error: {}".format(str(e)))
+                raise
+            finally:
+                for f in tmp_files:
+                    try:
+                        if os.path.isfile(f):
+                            os.unlink(f)
+                    except Exception:
+                        pass
+
 
     try:
         async with chunk_limiter:

@@ -69,9 +69,27 @@ export const useUploadNextDocument = () => {
     data,
     isPending: loading,
     mutateAsync,
-  } = useMutation<ResponseType<IDocumentInfo[]>, Error, File[]>({
+  } = useMutation<
+    ResponseType<IDocumentInfo[]>,
+    Error,
+    {
+      fileList: File[];
+      preprocessOnCreation?: boolean;
+      preprocessScript?: string;
+      preprocessApiBase?: string;
+      preprocessApiKey?: string;
+      preprocessModelName?: string;
+    }
+  >({
     mutationKey: [DocumentApiAction.UploadDocument],
-    mutationFn: async (fileList) => {
+    mutationFn: async ({
+      fileList,
+      preprocessOnCreation,
+      preprocessScript,
+      preprocessApiBase,
+      preprocessApiKey,
+      preprocessModelName,
+    }) => {
       if (!id) {
         return { code: 500, message: 'Dataset ID is required' };
       }
@@ -79,6 +97,13 @@ export const useUploadNextDocument = () => {
       fileList.forEach((file: any) => {
         formData.append('file', file);
       });
+      if (preprocessOnCreation) {
+        formData.append('preprocess_on_creation', 'true');
+        formData.append('preprocess_script', preprocessScript || '');
+        formData.append('preprocess_api_base', preprocessApiBase || '');
+        formData.append('preprocess_api_key', preprocessApiKey || '');
+        formData.append('preprocess_model_name', preprocessModelName || '');
+      }
 
       try {
         const ret = await uploadDocument(id, formData);

@@ -17,9 +17,24 @@ export const useHandleUploadDocument = () => {
   const { runDocumentByIds } = useRunDocument();
 
   const onDocumentUploadOk = useCallback(
-    async ({ fileList, parseOnCreation }: UploadFormSchemaType) => {
+    async ({
+      fileList,
+      parseOnCreation,
+      preprocessOnCreation,
+      preprocessScript,
+      preprocessApiBase,
+      preprocessApiKey,
+      preprocessModelName,
+    }: UploadFormSchemaType) => {
       if (fileList.length > 0) {
-        const ret = await uploadDocument(fileList);
+        const ret = await uploadDocument({
+          fileList,
+          preprocessOnCreation,
+          preprocessScript,
+          preprocessApiBase,
+          preprocessApiKey,
+          preprocessModelName,
+        });
 
         // Check for success (code === 0) or partial success (code === 500 with some files)
         const isSuccess = ret?.code === 0;
