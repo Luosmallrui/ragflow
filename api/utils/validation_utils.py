@@ -769,6 +769,9 @@ class UpdateDatasetReq(CreateDatasetReq):
     pagerank: Annotated[int, Field(default=0, ge=0, le=100)]
     language: Annotated[str | None, Field(default=None, max_length=32)]
     connectors: Annotated[list[dict[str, Any]], Field(default_factory=list)]
+    time_weight: Annotated[float, Field(default=0.0, ge=0.0, le=1.0)]
+    importance_level: Annotated[float, Field(default=0.0, ge=0.0, le=1.0)]
+    custom_weight: Annotated[float, Field(default=0.0, ge=0.0, le=2.0)]
 
     @field_validator("dataset_id", mode="before")
     @classmethod

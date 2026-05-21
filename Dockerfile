@@ -77,7 +77,9 @@ RUN --mount=type=cache,id=ragflow_apt,target=/var/cache/apt,sharing=locked \
         fonts-freefont-ttf \
         fonts-noto-cjk \
         postgresql-client \
-        unixodbc-dev; \
+        unixodbc-dev \
+        libreoffice \
+        libreoffice-l10n-zh-cn; \
     rm -rf /var/lib/apt/lists/*
 
 # Nginx

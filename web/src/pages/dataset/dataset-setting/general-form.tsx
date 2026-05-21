@@ -18,6 +18,7 @@ import { useMemo } from 'react';
 import { useFormContext } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { TagItems } from './components/tag-item';
+import { PermissionFormField } from './permission-form-field';
 
 export function GeneralForm() {
   const form = useFormContext();
@@ -124,6 +125,7 @@ export function GeneralForm() {
           );
         }}
       />
+      <PermissionFormField />
       <PageRankFormField />
       <TimeWeightFormField /> {/* 入库时间权重 */}
       <ImportanceLevelFormField /> {/* 重要性等级 */}
