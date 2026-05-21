@@ -914,6 +914,7 @@ class SILICONFLOWEmbed(Base):
             response = requests.post(self.base_url, json=payload, headers=self.headers, timeout=30)
             try:
                 res = response.json()
+                print(res)
                 ress.extend([d["embedding"] for d in res["data"]])
                 token_count += total_token_count_from_response(res)
             except Exception as _e:

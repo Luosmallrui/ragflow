@@ -21,15 +21,11 @@ import { Switch } from '../ui/switch';
 function buildUploadFormSchema(t: TFunction) {
   const FormSchema = z.object({
     parseOnCreation: z.boolean().optional(),
-<<<<<<< HEAD
-    // Update schema to allow files with path property to handle folder uploads
-=======
     preprocessOnCreation: z.boolean().optional(),
     preprocessScript: z.string().optional(),
     preprocessApiBase: z.string().optional(),
     preprocessApiKey: z.string().optional(),
     preprocessModelName: z.string().optional(),
->>>>>>> 6d5d3ce5f (update)
     fileList: z
       .array(
         z.instanceof(File).or(
@@ -66,8 +62,8 @@ function UploadForm({ submit, showParseOnCreation }: UploadFormProps) {
       parseOnCreation: false,
       preprocessOnCreation: false,
       preprocessScript: '/ragflow/script/run_pipeline.py',
-      preprocessApiBase: 'http://10.136.250.152:8081/v1',
-      preprocessApiKey: 'sk-vmmqbzqjgjcbxbpgfaegaahqgnrlldnarmakkgssdqbobyis ',
+      preprocessApiBase: 'http://10.136.250.152:8081',
+      preprocessApiKey: 'sk-vmmqbzqjgjcbxbpgfaegaahqgnrlldnarmakkgssdqbobyis',
       preprocessModelName: '/model/Qwen2.5-72B',
       fileList: [],
     },
