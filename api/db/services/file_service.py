@@ -455,7 +455,7 @@ class FileService(CommonService):
 
     @classmethod
     @DB.connection_context()
-    def upload_document(self, kb, file_objs, user_id, src="local", parent_path: str | None = None, preprocess_on_creation=False, preprocess_script="", preprocess_api_base="", preprocess_api_key="", preprocess_model_name=""):
+    def upload_document(self, kb, file_objs, user_id, src="local", parent_path: str | None = None, preprocess_on_creation=False, preprocess_script="", preprocess_llm_id="", preprocess_api_base="", preprocess_api_key="", preprocess_model_name=""):
         root_folder = self.get_root_folder(user_id)
         pf_id = root_folder["id"]
         self.init_knowledgebase_docs(pf_id, user_id)
@@ -528,6 +528,7 @@ class FileService(CommonService):
                 if preprocess_on_creation:
                     parser_config["preprocess_on_creation"] = True
                     parser_config["preprocess_script"] = preprocess_script
+                    parser_config["preprocess_llm_id"] = preprocess_llm_id
                     parser_config["preprocess_api_base"] = preprocess_api_base
                     parser_config["preprocess_api_key"] = preprocess_api_key
                     parser_config["preprocess_model_name"] = preprocess_model_name

@@ -6,6 +6,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { LlmModelType } from '@/constants/knowledge';
+import {
+  useComposeLlmOptionsByModelTypes,
+  useFindLlmByUuidDetailed,
+} from '@/hooks/use-llm-request';
 import { IModalProps } from '@/interfaces/common';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { TFunction } from 'i18next';
@@ -13,6 +18,7 @@ import { useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { z } from 'zod';
 import { FileUploader } from '../file-uploader';
+import { SelectWithSearch } from '../originui/select-with-search';
 import { RAGFlowFormItem } from '../ragflow-form';
 import { Form } from '../ui/form';
 import { Input } from '../ui/input';
@@ -23,9 +29,7 @@ function buildUploadFormSchema(t: TFunction) {
     parseOnCreation: z.boolean().optional(),
     preprocessOnCreation: z.boolean().optional(),
     preprocessScript: z.string().optional(),
-    preprocessApiBase: z.string().optional(),
-    preprocessApiKey: z.string().optional(),
-    preprocessModelName: z.string().optional(),
+    preprocessLlmId: z.string().optional(),
     fileList: z
       .array(
         z.instanceof(File).or(
@@ -54,6 +58,8 @@ type UploadFormProps = {
 function UploadForm({ submit, showParseOnCreation }: UploadFormProps) {
   const { t } = useTranslation();
   const FormSchema = buildUploadFormSchema(t);
+  const findLlmByUuid = useFindLlmByUuidDetailed();
+  const modelOptions = useComposeLlmOptionsByModelTypes([LlmModelType.Chat]);
 
   type UploadFormSchemaType = z.infer<typeof FormSchema>;
   const form = useForm<UploadFormSchemaType>({
@@ -62,12 +68,13 @@ function UploadForm({ submit, showParseOnCreation }: UploadFormProps) {
       parseOnCreation: false,
       preprocessOnCreation: false,
       preprocessScript: '/ragflow/script/run_pipeline.py',
-      preprocessApiBase: 'http://10.136.250.152:8081',
-      preprocessApiKey: 'sk-vmmqbzqjgjcbxbpgfaegaahqgnrlldnarmakkgssdqbobyis',
-      preprocessModelName: '/model/Qwen2.5-72B',
+      preprocessLlmId: '',
       fileList: [],
     },
   });
+
+  const selectedLlmId = form.watch('preprocessLlmId');
+  const selectedLlm = selectedLlmId ? findLlmByUuid(selectedLlmId) : null;
 
   return (
     <Form {...form}>
@@ -112,27 +119,32 @@ function UploadForm({ submit, showParseOnCreation }: UploadFormProps) {
                   )}
                 </RAGFlowFormItem>
                 <RAGFlowFormItem
-                  name="preprocessApiBase"
-                  label={t('fileManager.preprocessApiBase')}
+                  name="preprocessLlmId"
+                  label={t('fileManager.preprocessModel')}
                 >
-                  {(field) => (
-                    <Input placeholder="https://api.openai.com/v1" {...field} />
-                  )}
+                  <SelectWithSearch
+                    options={modelOptions}
+                    triggerClassName="w-full"
+                    testId="preprocess-model-select"
+                  />
                 </RAGFlowFormItem>
-                <RAGFlowFormItem
-                  name="preprocessApiKey"
-                  label={t('fileManager.preprocessApiKey')}
-                >
-                  {(field) => (
-                    <Input type="password" placeholder="sk-..." {...field} />
-                  )}
-                </RAGFlowFormItem>
-                <RAGFlowFormItem
-                  name="preprocessModelName"
-                  label={t('fileManager.preprocessModelName')}
-                >
-                  {(field) => <Input placeholder="gpt-4o" {...field} />}
-                </RAGFlowFormItem>
+                {selectedLlm && (
+                  <div className="text-xs text-muted-foreground bg-muted p-3 rounded-md">
+                    <div className="font-medium mb-1">
+                      {t('fileManager.scriptParamsPreview')}:
+                    </div>
+                    <code className="break-all">
+                      python script.py input output{' '}
+                      {selectedLlm.api_base || '(factory default)'}{' '}
+                      {'*'.repeat(8)} {selectedLlm.llm_name}
+                    </code>
+                    {!selectedLlm.api_base && (
+                      <div className="mt-1 text-yellow-600">
+                        {t('fileManager.apiBaseFromFactory')}
+                      </div>
+                    )}
+                  </div>
+                )}
               </>
             )}
           </>

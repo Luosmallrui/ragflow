@@ -69,6 +69,27 @@ export function useFindLlmByUuid(modelType?: LlmModelType) {
   };
 }
 
+export function useFindLlmByUuidDetailed() {
+  const { data: llmList } = useFetchMyLlmListDetailed();
+
+  return (uuid: string) => {
+    const [llmName, factoryId] = uuid.split('@');
+    const factoryData = llmList[factoryId];
+    if (factoryData?.llm) {
+      const model = factoryData.llm.find((m: any) => m.name === llmName);
+      if (model) {
+        return {
+          llm_name: model.name,
+          api_base: model.api_base || '',
+          max_tokens: model.max_tokens,
+          model_type: model.type,
+        };
+      }
+    }
+    return null;
+  };
+}
+
 function buildLlmOptionsWithIcon(x: IThirdOAIModel) {
   return {
     label: (

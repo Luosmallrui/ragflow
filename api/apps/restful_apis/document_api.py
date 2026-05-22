@@ -584,9 +584,22 @@ async def _upload_local_documents(kb, tenant_id):
             logging.error(msg)
             return get_error_data_result(message=msg, code=RetCode.ARGUMENT_ERROR)
 
+    preprocess_on_creation = form.get("preprocess_on_creation", "false").lower() == "true"
+    preprocess_script = form.get("preprocess_script", "")
+    preprocess_llm_id = form.get("preprocess_llm_id", "")
+    preprocess_api_base = form.get("preprocess_api_base", "")
+    preprocess_api_key = form.get("preprocess_api_key", "")
+    preprocess_model_name = form.get("preprocess_model_name", "")
+
     err, files = await thread_pool_exec(
         FileService.upload_document, kb, file_objs, tenant_id,
-        parent_path=form.get("parent_path")
+        parent_path=form.get("parent_path"),
+        preprocess_on_creation=preprocess_on_creation,
+        preprocess_script=preprocess_script,
+        preprocess_llm_id=preprocess_llm_id,
+        preprocess_api_base=preprocess_api_base,
+        preprocess_api_key=preprocess_api_key,
+        preprocess_model_name=preprocess_model_name
     )
     if err:
         msg = "\n".join(err)

@@ -76,6 +76,7 @@ export const useUploadNextDocument = () => {
       fileList: File[];
       preprocessOnCreation?: boolean;
       preprocessScript?: string;
+      preprocessLlmId?: string;
       preprocessApiBase?: string;
       preprocessApiKey?: string;
       preprocessModelName?: string;
@@ -86,6 +87,7 @@ export const useUploadNextDocument = () => {
       fileList,
       preprocessOnCreation,
       preprocessScript,
+      preprocessLlmId,
       preprocessApiBase,
       preprocessApiKey,
       preprocessModelName,
@@ -100,6 +102,7 @@ export const useUploadNextDocument = () => {
       if (preprocessOnCreation) {
         formData.append('preprocess_on_creation', 'true');
         formData.append('preprocess_script', preprocessScript || '');
+        formData.append('preprocess_llm_id', preprocessLlmId || '');
         formData.append('preprocess_api_base', preprocessApiBase || '');
         formData.append('preprocess_api_key', preprocessApiKey || '');
         formData.append('preprocess_model_name', preprocessModelName || '');

@@ -77,6 +77,8 @@ from api.db.services.doc_metadata_service import DocMetadataService
 from api.db.services.llm_service import LLMBundle
 from api.db.services.task_service import TaskService, has_canceled, CANVAS_DEBUG_DOC_ID, GRAPH_RAPTOR_FAKE_DOC_ID
 from api.db.services.file2document_service import File2DocumentService
+from api.db.services.tenant_llm_service import TenantLLMService
+from rag.llm import FACTORY_DEFAULT_BASE_URL
 from api.db.joint_services.tenant_model_service import get_model_config_by_type_and_name, get_tenant_default_model_by_type
 from common.versions import get_ragflow_version
 from api.db.db_models import close_connection
@@ -309,9 +311,36 @@ async def build_chunks(task, progress_callback):
                     input_path = tmp_in.name
                 output_path = input_path + ".md"
                 tmp_files = [input_path, output_path]
+
+                # Look up model config from TenantLLM if preprocess_llm_id is provided
+                preprocess_llm_id = parser_config.get("preprocess_llm_id", "")
                 api_base = parser_config.get("preprocess_api_base", "")
                 api_key = parser_config.get("preprocess_api_key", "")
                 model_name = parser_config.get("preprocess_model_name", "")
+
+                if preprocess_llm_id:
+                    try:
+                        llm_name, llm_factory = preprocess_llm_id.split("@", 1)
+                        tenant_llm = TenantLLMService.query(
+                            tenant_id=task["tenant_id"],
+                            llm_factory=llm_factory,
+                            llm_name=llm_name
+                        )
+                        if tenant_llm:
+                            tenant_llm = tenant_llm[0]
+                            api_base = tenant_llm.api_base or api_base
+                            api_key = tenant_llm.api_key or api_key
+                            model_name = tenant_llm.llm_name or model_name
+                            logging.info("Using model config from TenantLLM: {}".format(preprocess_llm_id))
+                        else:
+                            logging.warning("Model not found in TenantLLM: {}".format(preprocess_llm_id))
+
+                        # Fallback to factory default base URL if api_base is still empty
+                        if not api_base and llm_factory in FACTORY_DEFAULT_BASE_URL:
+                            api_base = FACTORY_DEFAULT_BASE_URL[llm_factory]
+                            logging.info("Using default api_base for {}: {}".format(llm_factory, api_base))
+                    except Exception as e:
+                        logging.warning("Failed to lookup model config for {}: {}".format(preprocess_llm_id, e))
                 cmd = [sys.executable, "-u", script_path, input_path, output_path]
                 if api_base:
                     cmd.append(api_base)
