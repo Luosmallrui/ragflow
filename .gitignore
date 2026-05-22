@@ -233,3 +233,8 @@ internal/cpp/cmake-build-debug/
 bin/*
 !bin/.gitkeep
 .claude/settings.local.json
+
+# Preprocess temp files
+docs/tmp*.docx
+output/
+section_chunks.jsonl

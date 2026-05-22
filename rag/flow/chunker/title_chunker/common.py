@@ -38,8 +38,9 @@ BODY_LEVEL = sys.maxsize - 1
 class TitleChunkerParam(ProcessParamBase):
     def __init__(self):
         super().__init__()
+        self.method = "hierarchy"
         self.levels = []
-        self.hierarchy = None
+        self.hierarchy = "3"
         self.include_heading_content = False
         self.root_chunk_as_heading = False
 

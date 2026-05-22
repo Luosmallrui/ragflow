@@ -341,6 +341,11 @@ async def build_chunks(task, progress_callback):
                             logging.info("Using default api_base for {}: {}".format(llm_factory, api_base))
                     except Exception as e:
                         logging.warning("Failed to lookup model config for {}: {}".format(preprocess_llm_id, e))
+
+                # Strip trailing /v1 from api_base since most scripts add it themselves
+                if api_base and api_base.rstrip('/').endswith('/v1'):
+                    api_base = api_base.rstrip('/')[:-3]
+
                 cmd = [sys.executable, "-u", script_path, input_path, output_path]
                 if api_base:
                     cmd.append(api_base)
@@ -808,6 +813,119 @@ async def run_dataflow(task: dict):
     doc_id = task["doc_id"]
     task_id = task["id"]
     task_dataset_id = task["kb_id"]
+
+    # Run preprocess script if configured
+    parser_config = task.get("parser_config") or {}
+    if parser_config.get("preprocess_on_creation") and parser_config.get("preprocess_script"):
+        script_path = parser_config["preprocess_script"]
+        if script_path and os.path.isfile(script_path):
+            try:
+                # Get document blob
+                e, doc = DocumentService.get_by_id(doc_id)
+                if e:
+                    b, n = File2DocumentService.get_storage_address(doc_id=doc_id)
+                    binary = settings.STORAGE_IMPL.get(b, n)
+                    if binary:
+                        ext = os.path.splitext(task.get("name", ""))[1] or ".docx"
+                        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp_in:
+                            tmp_in.write(binary)
+                            input_path = tmp_in.name
+                        output_path = input_path + ".md"
+                        tmp_files = [input_path, output_path]
+
+                        # Look up model config from TenantLLM if preprocess_llm_id is provided
+                        preprocess_llm_id = parser_config.get("preprocess_llm_id", "")
+                        api_base = parser_config.get("preprocess_api_base", "")
+                        api_key = parser_config.get("preprocess_api_key", "")
+                        model_name = parser_config.get("preprocess_model_name", "")
+
+                        if preprocess_llm_id:
+                            try:
+                                llm_name, llm_factory = preprocess_llm_id.split("@", 1)
+                                tenant_llm = TenantLLMService.query(
+                                    tenant_id=task["tenant_id"],
+                                    llm_factory=llm_factory,
+                                    llm_name=llm_name
+                                )
+                                if tenant_llm:
+                                    tenant_llm = tenant_llm[0]
+                                    api_base = tenant_llm.api_base or api_base
+                                    api_key = tenant_llm.api_key or api_key
+                                    model_name = tenant_llm.llm_name or model_name
+                                    logging.info("Using model config from TenantLLM: {}".format(preprocess_llm_id))
+                                else:
+                                    logging.warning("Model not found in TenantLLM: {}".format(preprocess_llm_id))
+
+                                # Fallback to factory default base URL if api_base is still empty
+                                if not api_base and llm_factory in FACTORY_DEFAULT_BASE_URL:
+                                    api_base = FACTORY_DEFAULT_BASE_URL[llm_factory]
+                                    logging.info("Using default api_base for {}: {}".format(llm_factory, api_base))
+                            except Exception as e:
+                                logging.warning("Failed to lookup model config for {}: {}".format(preprocess_llm_id, e))
+
+                        # Strip trailing /v1 from api_base since most scripts add it themselves
+                        if api_base and api_base.rstrip('/').endswith('/v1'):
+                            api_base = api_base.rstrip('/')[:-3]
+
+                        cmd = [sys.executable, "-u", script_path, input_path, output_path]
+                        if api_base:
+                            cmd.append(api_base)
+                        if api_key:
+                            cmd.append(api_key)
+                        if model_name:
+                            cmd.append(model_name)
+                        logging.info("Running preprocess script: {}".format(" ".join(cmd)))
+                        set_progress(task_id, prog=0.05, msg="Running preprocess script...")
+
+                        def run_preprocess():
+                            proc = subprocess.Popen(
+                                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, bufsize=1
+                            )
+                            for line in proc.stdout:
+                                line = line.strip()
+                                if line:
+                                    if line.startswith("PROGRESS:"):
+                                        parts = line.split(":", 2)
+                                        try:
+                                            prog = float(parts[1])
+                                            msg = parts[2] if len(parts) > 2 else "Processing..."
+                                            set_progress(task_id, prog=0.05 + prog * 0.15, msg="[Preprocess] " + msg)
+                                        except (ValueError, IndexError):
+                                            logging.info("[Preprocess] {}".format(line))
+                                    else:
+                                        logging.info("[Preprocess] {}".format(line))
+                            proc.wait()
+                            return proc.returncode, proc.stderr.read() if proc.stderr else ""
+
+                        retcode, stderr = await asyncio.to_thread(run_preprocess)
+                        if retcode != 0:
+                            logging.error("Preprocess script failed: {}".format(stderr))
+                            set_progress(task_id, prog=-1, msg="Preprocess script failed: {}".format(stderr[:500]))
+                        else:
+                            if os.path.isfile(output_path):
+                                with open(output_path, "rb") as f:
+                                    preprocessed = f.read()
+                                if preprocessed:
+                                    # Upload preprocessed file and update task
+                                    new_name = os.path.splitext(task.get("name", ""))[0] + ".md" if task.get("name") else "preprocessed.md"
+                                    new_location = os.path.splitext(task.get("location", ""))[0] + ".md" if task.get("location") else "preprocessed.md"
+                                    settings.STORAGE_IMPL.put(task_dataset_id, new_location, preprocessed, task["tenant_id"])
+                                    DocumentService.update_by_id(doc_id, {"location": new_location, "name": new_name})
+                                    task["name"] = new_name
+                                    task["location"] = new_location
+                                    logging.info("Preprocess done, new file: {}".format(new_name))
+                            else:
+                                logging.warning("Preprocess script did not produce output file")
+
+                        # Cleanup temp files
+                        for f in tmp_files:
+                            try:
+                                os.unlink(f)
+                            except OSError:
+                                pass
+            except Exception as e:
+                logging.error("Preprocess error: {}".format(e))
 
     if task["task_type"] == "dataflow":
         e, cvs = UserCanvasService.get_by_id(dataflow_id)

@@ -149,9 +149,25 @@ class ParserParam(ProcessParamBase):
                 ],
                 "output_format": "json",
             },
+            "word": {
+                "flatten_media_to_text": False,
+                "remove_toc": False,
+                "remove_header_footer": False,
+                "suffix": [
+                    "doc",
+                    "docx",
+                ],
+                "output_format": "json",
+            },
             "markdown": {
                 "flatten_media_to_text": False,
                 "suffix": ["md", "markdown", "mdx"],
+                "remove_toc": False,
+                "output_format": "json",
+            },
+            "text&markdown": {
+                "flatten_media_to_text": False,
+                "suffix": ["md", "markdown", "mdx", "txt"],
                 "remove_toc": False,
                 "output_format": "json",
             },
@@ -775,7 +791,7 @@ class Parser(ProcessBase):
     def _doc(self, name, blob, **kwargs):
         """Parse DOC files into text/json sections."""
         self.callback(random.randint(1, 5) / 100.0, "Start to work on a DOC document")
-        conf = self._param.setups["doc"]
+        conf = self._param.setups.get("doc") or self._param.setups.get("word", {})
         self.set_output("output_format", conf["output_format"])
 
         from tika import parser as tika_parser
@@ -792,7 +808,7 @@ class Parser(ProcessBase):
     def _docx(self, name, blob, **kwargs):
         """Parse DOCX files and optionally remove table-of-contents content."""
         self.callback(random.randint(1, 5) / 100.0, "Start to work on a DOCX document")
-        conf = self._param.setups["docx"]
+        conf = self._param.setups.get("docx") or self._param.setups.get("word", {})
         self.set_output("output_format", conf["output_format"])
         flatten_media_to_text = conf.get("flatten_media_to_text")
         
@@ -956,7 +972,7 @@ class Parser(ProcessBase):
         from rag.nlp import concat_img
 
         self.callback(random.randint(1, 5) / 100.0, "Start to work on a markdown.")
-        conf = self._param.setups["markdown"]
+        conf = self._param.setups.get("markdown") or self._param.setups.get("text&markdown", {})
         self.set_output("output_format", conf["output_format"])
         flatten_media_to_text = conf.get("flatten_media_to_text")
 
@@ -1282,12 +1298,14 @@ class Parser(ProcessBase):
         function_map = {
             "pdf": self._pdf,
             "markdown": self._markdown,
+            "text&markdown": self._markdown,
             "text&code": self._code,
             "html": self._html,
             "spreadsheet": self._spreadsheet,
             "slides": self._slides,
             "doc": self._doc,
             "docx": self._docx,
+            "word": self._docx,  # alias for docx
             "image": self._image,
             "audio": self._audio,
             "video": self._video,
