@@ -82,6 +82,7 @@ HTTP_APP_KEY = None
 GITHUB_OAUTH = None
 FEISHU_OAUTH = None
 OAUTH_CONFIG = None
+SSO_PROVIDERS = None
 DOC_ENGINE = os.getenv('DOC_ENGINE', 'elasticsearch')
 DOC_ENGINE_INFINITY = (DOC_ENGINE.lower() == "infinity")
 DOC_ENGINE_OCEANBASE = (DOC_ENGINE.lower() == "oceanbase")
@@ -272,13 +273,14 @@ def init_settings():
     # authentication
     authentication_conf = get_base_config("authentication", {})
 
-    global CLIENT_AUTHENTICATION, HTTP_APP_KEY, GITHUB_OAUTH, FEISHU_OAUTH, OAUTH_CONFIG
+    global CLIENT_AUTHENTICATION, HTTP_APP_KEY, GITHUB_OAUTH, FEISHU_OAUTH, OAUTH_CONFIG, SSO_PROVIDERS
     # client
     CLIENT_AUTHENTICATION = authentication_conf.get("client", {}).get("switch", False)
     HTTP_APP_KEY = authentication_conf.get("client", {}).get("http_app_key")
     GITHUB_OAUTH = get_base_config("oauth", {}).get("github")
     FEISHU_OAUTH = get_base_config("oauth", {}).get("feishu")
     OAUTH_CONFIG = get_base_config("oauth", {})
+    SSO_PROVIDERS = get_base_config("sso_providers", {})
 
     global DOC_ENGINE, DOC_ENGINE_INFINITY, DOC_ENGINE_OCEANBASE, docStoreConn, ES, OB, OS, INFINITY
     DOC_ENGINE = os.environ.get("DOC_ENGINE", "elasticsearch").strip()

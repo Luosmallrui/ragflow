@@ -170,3 +170,11 @@ user_default_llm:
 #   secret_id: '${TENCENT_SECRET_ID}'
 #   secret_key: '${TENCENT_SECRET_KEY}'
 #   region: '${TENCENT_REGION}'
+# sso_providers:
+#   lava:
+#     userinfo_url: "https://<lava-host>/LAVAPlatform/permission/getCurrentUserInfo"
+#     auth_header: "Bearer {token}"
+#     employee_id_field: "data.User.login_name"
+#     name_field: "data.User.name"
+#     login_enabled_field: "data.User.logon_enabled"
+#     timeout: 15

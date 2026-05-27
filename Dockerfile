@@ -21,10 +21,10 @@ RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/huggingface.co
 # This is the only way to run python-tika without internet access.
 RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/,target=/deps \
     cp -r /deps/nltk_data /root/ && \
-    cp /deps/tika-server-standard-3.2.3.jar /deps/tika-server-standard-3.2.3.jar.md5 /ragflow/ && \
+    cp /deps/tika-server-standard-3.3.0.jar /deps/tika-server-standard-3.3.0.jar.md5 /ragflow/ && \
     cp /deps/cl100k_base.tiktoken /ragflow/9b5ad71b2ce5302211f9c61530b329a4922fc6a4
 
-ENV TIKA_SERVER_JAR="file:///ragflow/tika-server-standard-3.2.3.jar"
+ENV TIKA_SERVER_JAR="file:///ragflow/tika-server-standard-3.3.0.jar"
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
@@ -34,7 +34,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 # Setup apt
 # Python package and implicit dependencies:
 # opencv-python: libglib2.0-0 libglx-mesa0 libgl1
-# python-pptx:   default-jdk tika-server-standard-3.2.3.jar
+# python-pptx:   default-jdk tika-server-standard-3.3.0.jar
 # selenium:      libatk-bridge2.0-0 chrome-linux64-121-0-6167-85
 # Building C extensions: libpython3-dev libgtk-4-1 libnss3 xdg-utils libgbm-dev
 RUN --mount=type=cache,id=ragflow_apt,target=/var/cache/apt,sharing=locked \
@@ -108,7 +108,7 @@ RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/,target=/deps 
     tar xzf "/deps/uv-${uv_arch}-unknown-linux-gnu.tar.gz"; \
     cp "uv-${uv_arch}-unknown-linux-gnu/"* /usr/local/bin/; \
     rm -rf "uv-${uv_arch}-unknown-linux-gnu"; \
-    uv python install 3.12
+    uv python install 3.13
 
 # nodejs 20
 RUN --mount=type=cache,id=ragflow_apt,target=/var/cache/apt,sharing=locked \
@@ -186,7 +186,9 @@ RUN --mount=type=cache,id=ragflow_uv,target=/root/.cache/uv,sharing=locked \
     else \
         sed -i 's|pypi.tuna.tsinghua.edu.cn|pypi.org|g' uv.lock; \
     fi; \
-    uv sync --python 3.12 --frozen && \
+    sed -i '/graspologic/d' pyproject.toml; \
+    rm -f uv.lock; \
+    uv sync --python 3.13 && \
     .venv/bin/python3 -m ensurepip --upgrade
 
 COPY web web
@@ -217,6 +219,7 @@ COPY --from=builder ${VIRTUAL_ENV} ${VIRTUAL_ENV}
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
 ENV PYTHONPATH=/ragflow/
+ENV HOME=/tmp
 
 COPY web web
 COPY admin admin
@@ -224,6 +227,7 @@ COPY api api
 COPY conf conf
 COPY deepdoc deepdoc
 COPY rag rag
+COPY script script
 COPY agent agent
 COPY pyproject.toml uv.lock ./
 COPY mcp mcp
@@ -232,6 +236,10 @@ COPY memory memory
 
 COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template
 COPY docker/entrypoint.sh ./
+COPY docker/nginx/proxy.conf /etc/nginx/proxy.conf
+COPY docker/nginx/ragflow.conf.python /etc/nginx/conf.d/ragflow.conf.python
+COPY docker/nginx/ragflow.conf.golang /etc/nginx/conf.d/ragflow.conf.golang
+COPY docker/nginx/ragflow.conf.hybrid /etc/nginx/conf.d/ragflow.conf.hybrid
 RUN chmod +x ./entrypoint*.sh
 
 COPY --from=builder /ragflow/web/dist /ragflow/web/dist

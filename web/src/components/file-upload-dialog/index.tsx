@@ -18,7 +18,10 @@ import { useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { z } from 'zod';
 import { FileUploader } from '../file-uploader';
-import { SelectWithSearch } from '../originui/select-with-search';
+import {
+  SelectWithSearch,
+  SelectWithSearchFlagOptionType,
+} from '../originui/select-with-search';
 import { RAGFlowFormItem } from '../ragflow-form';
 import { Form } from '../ui/form';
 import { Input } from '../ui/input';
@@ -122,11 +125,15 @@ function UploadForm({ submit, showParseOnCreation }: UploadFormProps) {
                   name="preprocessLlmId"
                   label={t('fileManager.preprocessModel')}
                 >
-                  <SelectWithSearch
-                    options={modelOptions}
-                    triggerClassName="w-full"
-                    testId="preprocess-model-select"
-                  />
+                  {(field) => (
+                    <SelectWithSearch
+                      value={field.value ?? ''}
+                      onChange={field.onChange}
+                      options={modelOptions as SelectWithSearchFlagOptionType[]}
+                      triggerClassName="w-full"
+                      testId="preprocess-model-select"
+                    />
+                  )}
                 </RAGFlowFormItem>
                 {selectedLlm && (
                   <div className="text-xs text-muted-foreground bg-muted p-3 rounded-md">
@@ -176,24 +183,19 @@ export function FileUploadDialog({
 
   return (
     <Dialog open onOpenChange={hideModal}>
-      <DialogContent data-testid="dataset-upload-modal">
+      <DialogContent
+        data-testid="dataset-upload-modal"
+        className="max-h-[90vh] flex flex-col"
+      >
         <DialogHeader>
           <DialogTitle>{t('fileManager.uploadFile')}</DialogTitle>
         </DialogHeader>
-        {/* <Tabs defaultValue="account">
-          <TabsList className="grid w-full grid-cols-2 mb-4">
-            <TabsTrigger value="account">{t('fileManager.local')}</TabsTrigger>
-            <TabsTrigger value="password">{t('fileManager.s3')}</TabsTrigger>
-          </TabsList>
-          <TabsContent value="account">
-            <UploadForm
-              submit={onOk!}
-              showParseOnCreation={showParseOnCreation}
-            ></UploadForm>
-          </TabsContent>
-          <TabsContent value="password">{t('common.comingSoon')}</TabsContent>
-        </Tabs> */}
-        <UploadForm submit={onOk!} showParseOnCreation={showParseOnCreation} />
+        <div className="overflow-y-auto -mx-6 px-6">
+          <UploadForm
+            submit={onOk!}
+            showParseOnCreation={showParseOnCreation}
+          />
+        </div>
         <DialogFooter>
           <ButtonLoading type="submit" loading={loading} form={UploadFormId}>
             {t('common.save')}

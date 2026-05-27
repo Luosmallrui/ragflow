@@ -104,6 +104,39 @@ from rag.utils.table_es_metadata import (
 BATCH_SIZE = 64
 
 
+def _append_preprocess_llm_args(cmd, api_base="", api_key="", model_name=""):
+    if api_base:
+        cmd.extend(["--base-url", api_base])
+    if api_key:
+        cmd.extend(["--api-key", api_key])
+    if model_name:
+        cmd.extend(["--model", model_name])
+    return cmd
+
+
+def _preprocess_output_name(original_name="", original_location=""):
+    name_stem = os.path.splitext(original_name or "")[0]
+    location_stem = os.path.splitext(original_location or "")[0]
+    new_name = name_stem + ".md" if name_stem else "preprocessed.md"
+    new_location = location_stem + ".md" if location_stem else new_name
+
+    if original_location and new_location == original_location:
+        new_location = location_stem + ".preprocessed.md"
+    if original_name and new_name == original_name:
+        new_name = name_stem + ".preprocessed.md"
+
+    return new_name, new_location
+
+
+def _preprocess_input_is_supported(name="", binary=b""):
+    ext = os.path.splitext(name or "")[1].lower()
+    if ext in {".doc", ".docx", ".pdf"}:
+        return True
+
+    header = (binary or b"")[:8]
+    return header[:4] == b"\xd0\xcf\x11\xe0" or header[:2] == b"PK" or header[:4] == b"%PDF"
+
+
 FACTORY = {
     "general": naive,
     ParserType.NAIVE.value: naive,
@@ -301,7 +334,11 @@ async def build_chunks(task, progress_callback):
         )
 
     parser_config = task["parser_config"] or {}
-    if parser_config.get("preprocess_on_creation") and parser_config.get("preprocess_script"):
+    if (
+        parser_config.get("preprocess_on_creation")
+        and parser_config.get("preprocess_script")
+        and _preprocess_input_is_supported(task.get("name", ""), binary)
+    ):
         script_path = parser_config["preprocess_script"]
         if script_path and os.path.isfile(script_path):
             try:
@@ -346,13 +383,12 @@ async def build_chunks(task, progress_callback):
                 if api_base and api_base.rstrip('/').endswith('/v1'):
                     api_base = api_base.rstrip('/')[:-3]
 
-                cmd = [sys.executable, "-u", script_path, input_path, output_path]
-                if api_base:
-                    cmd.append(api_base)
-                if api_key:
-                    cmd.append(api_key)
-                if model_name:
-                    cmd.append(model_name)
+                cmd = _append_preprocess_llm_args(
+                    [sys.executable, "-u", script_path, input_path, output_path],
+                    api_base=api_base,
+                    api_key=api_key,
+                    model_name=model_name,
+                )
                 logging.info("Running preprocess script: {}".format(" ".join(cmd)))
                 progress_callback(0.05, "Running preprocess script...")
 
@@ -392,8 +428,7 @@ async def build_chunks(task, progress_callback):
                 if os.path.isfile(output_path):
                     with open(output_path, "rb") as f:
                         binary = f.read()
-                    new_name = os.path.splitext(task["name"])[0] + ".md" if task["name"] else "preprocessed.md"
-                    new_location = os.path.splitext(task["location"])[0] + ".md" if task["location"] else "preprocessed.md"
+                    new_name, new_location = _preprocess_output_name(task.get("name", ""), task.get("location", ""))
                     try:
                         settings.STORAGE_IMPL.put(bucket, new_location, binary, task["tenant_id"])
                         logging.info("Preprocess: uploaded {} to MinIO({}/{})".format(new_name, bucket, new_location))
@@ -402,6 +437,9 @@ async def build_chunks(task, progress_callback):
                     DocumentService.update_by_id(task["doc_id"], {"location": new_location, "name": new_name})
                     task["name"] = new_name
                     task["location"] = new_location
+                    if task["name"].lower().endswith((".md", ".markdown", ".mdx")):
+                        task["parser_id"] = ParserType.NAIVE.value
+                        chunker = FACTORY[ParserType.NAIVE.value]
                     logging.info("Preprocess done, new file: {}".format(task["name"]))
                 else:
                     logging.warning("Preprocess script did not produce output file: {}".format(output_path))
@@ -416,6 +454,8 @@ async def build_chunks(task, progress_callback):
                             os.unlink(f)
                     except Exception:
                         pass
+    elif parser_config.get("preprocess_on_creation") and parser_config.get("preprocess_script"):
+        logging.info("Skipping preprocess script for unsupported input: {}".format(task.get("name", "")))
 
 
     try:
@@ -825,6 +865,9 @@ async def run_dataflow(task: dict):
                 if e:
                     b, n = File2DocumentService.get_storage_address(doc_id=doc_id)
                     binary = settings.STORAGE_IMPL.get(b, n)
+                    if binary and not _preprocess_input_is_supported(task.get("name", ""), binary):
+                        logging.info("Skipping preprocess script for unsupported input: {}".format(task.get("name", "")))
+                        binary = None
                     if binary:
                         ext = os.path.splitext(task.get("name", ""))[1] or ".docx"
                         with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp_in:
@@ -867,13 +910,12 @@ async def run_dataflow(task: dict):
                         if api_base and api_base.rstrip('/').endswith('/v1'):
                             api_base = api_base.rstrip('/')[:-3]
 
-                        cmd = [sys.executable, "-u", script_path, input_path, output_path]
-                        if api_base:
-                            cmd.append(api_base)
-                        if api_key:
-                            cmd.append(api_key)
-                        if model_name:
-                            cmd.append(model_name)
+                        cmd = _append_preprocess_llm_args(
+                            [sys.executable, "-u", script_path, input_path, output_path],
+                            api_base=api_base,
+                            api_key=api_key,
+                            model_name=model_name,
+                        )
                         logging.info("Running preprocess script: {}".format(" ".join(cmd)))
                         set_progress(task_id, prog=0.05, msg="Running preprocess script...")
 
@@ -908,8 +950,7 @@ async def run_dataflow(task: dict):
                                     preprocessed = f.read()
                                 if preprocessed:
                                     # Upload preprocessed file and update task
-                                    new_name = os.path.splitext(task.get("name", ""))[0] + ".md" if task.get("name") else "preprocessed.md"
-                                    new_location = os.path.splitext(task.get("location", ""))[0] + ".md" if task.get("location") else "preprocessed.md"
+                                    new_name, new_location = _preprocess_output_name(task.get("name", ""), task.get("location", ""))
                                     settings.STORAGE_IMPL.put(task_dataset_id, new_location, preprocessed, task["tenant_id"])
                                     DocumentService.update_by_id(doc_id, {"location": new_location, "name": new_name})
                                     task["name"] = new_name

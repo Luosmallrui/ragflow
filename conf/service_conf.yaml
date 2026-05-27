@@ -42,7 +42,7 @@ oceanbase:
 redis:
   db: 1
   username: ''
-  password: ''
+  password: 'infini_rag_flow'
   host: 'localhost:6379'
 task_executor:
   message_queue_type: 'redis'
@@ -157,3 +157,11 @@ user_default_llm:
 #  secret_id: 'tencent_secret_id'
 #  secret_key: 'tencent_secret_key'
 #  region: 'tencent_region'
+# sso_providers:
+#   lava:
+#     userinfo_url: "https://<lava-host>/LAVAPlatform/permission/getCurrentUserInfo"
+#     auth_header: "Bearer {token}"
+#     employee_id_field: "data.User.login_name"
+#     name_field: "data.User.name"
+#     login_enabled_field: "data.User.logon_enabled"
+#     timeout: 15

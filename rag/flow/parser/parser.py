@@ -110,6 +110,95 @@ class ParserParam(ProcessParamBase):
             ],
         }
 
+        self._default_setups = {
+            "pdf": {
+                "parse_method": "deepdoc",
+                "lang": "Chinese",
+                "flatten_media_to_text": False,
+                "remove_toc": False,
+                "remove_header_footer": False,
+                "suffix": ["pdf"],
+                "output_format": "json",
+            },
+            "spreadsheet": {
+                "parse_method": "deepdoc",
+                "flatten_media_to_text": False,
+                "output_format": "html",
+                "suffix": ["xls","xlsx","csv"],
+            },
+            "doc": {
+                "remove_toc": False,
+                "remove_header_footer": False,
+                "suffix": ["doc"],
+                "output_format": "json",
+            },
+            "docx": {
+                "flatten_media_to_text": False,
+                "remove_toc": False,
+                "remove_header_footer": False,
+                "suffix": ["docx"],
+                "output_format": "json",
+            },
+            "word": {
+                "flatten_media_to_text": False,
+                "remove_toc": False,
+                "remove_header_footer": False,
+                "suffix": ["doc","docx"],
+                "output_format": "json",
+            },
+            "markdown": {
+                "flatten_media_to_text": False,
+                "suffix": ["md","markdown","mdx"],
+                "remove_toc": False,
+                "output_format": "json",
+            },
+            "text&markdown": {
+                "flatten_media_to_text": False,
+                "suffix": ["md","markdown","mdx","txt"],
+                "remove_toc": False,
+                "output_format": "json",
+            },
+            "text&code": {
+                "suffix": ["txt","py","js","java","c","cpp","h","php","go","ts","sh","cs","kt","sql"],
+                "output_format": "json",
+            },
+            "html": {
+                "suffix": ["htm","html"],
+                "remove_toc": False,
+                "remove_header_footer": False,
+                "output_format": "json",
+            },
+            "slides": {
+                "parse_method": "deepdoc",
+                "suffix": ["pptx","ppt"],
+                "output_format": "json",
+            },
+            "image": {
+                "parse_method": "ocr",
+                "llm_id": "",
+                "lang": "Chinese",
+                "system_prompt": "",
+                "suffix": ["jpg","jpeg","png","gif"],
+                "output_format": "json",
+            },
+            "email": {
+                "suffix": ["eml","msg"],
+                "fields": ["from","to","cc","bcc","date","subject","body","attachments","metadata"],
+                "output_format": "json",
+            },
+            "audio": {
+                "suffix": ["da","wave","wav","mp3","aac","flac","ogg","aiff","au","midi","wma","realaudio","vqf","oggvorbis","ape"],
+                "output_format": "text",
+            },
+            "video": {
+                "suffix": ["mp4","avi","mov","mkv","wmv","flv","webm","m4v","mpeg","3gp","ogg"],
+                "output_format": "text",
+            },
+            "epub": {
+                "suffix": ["epub"],
+                "output_format": "text",
+            },
+        }
         self.setups = {
             "pdf": {
                 "parse_method": "deepdoc",  # deepdoc/plain_text/tcadp_parser/vlm
@@ -335,6 +424,7 @@ class ParserParam(ProcessParamBase):
 
 class Parser(ProcessBase):
     component_name = "Parser"
+    _default_setups = None
 
     def _pdf(self, name, blob, **kwargs):
         """Parse PDF files into structured boxes or markdown/json output."""
@@ -1326,9 +1416,20 @@ class Parser(ProcessBase):
         else:
             blob = FileService.get_blob(from_upstream.file["created_by"], from_upstream.file["id"])
 
+        setups = self._param.setups
+        if not isinstance(setups, dict):
+            setups = getattr(self._param, "_default_setups", {})
+        else:
+            defaults = getattr(self._param, "_default_setups", {})
+            for key, default_conf in defaults.items():
+                if key in setups and "suffix" not in setups[key]:
+                    setups[key]["suffix"] = default_conf.get("suffix", [])
+
+
+        ext = from_upstream.name.split(".")[-1].lower()
         done = False
-        for p_type, conf in self._param.setups.items():
-            if from_upstream.name.split(".")[-1].lower() not in conf.get("suffix", []):
+        for p_type, conf in setups.items():
+            if ext not in conf.get("suffix", []):
                 continue
             call_kwargs = dict(kwargs)
             call_kwargs.pop("name", None)
@@ -1354,3 +1455,5 @@ class Parser(ProcessBase):
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
+
+# DEBUG: check setups type

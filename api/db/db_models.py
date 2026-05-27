@@ -1458,56 +1458,67 @@ def update_tenant_llm_to_id_primary_key():
 def _update_tenant_llm_to_id_primary_key_mysql():
     """MySQL implementation: Add ID column and set as AUTO_INCREMENT primary key."""
     try:
-        with DB.atomic():
-            # 0. Check if 'id' column already exists
-            cursor = DB.execute_sql("""
-                            SELECT COLUMN_NAME
-                            FROM INFORMATION_SCHEMA.COLUMNS
-                            WHERE TABLE_SCHEMA = DATABASE()
-                            AND TABLE_NAME = 'tenant_llm'
-                            AND COLUMN_NAME = 'id'
-                        """)
-            if cursor.rowcount > 0:
-                return
+        # 0. Check if 'id' column already exists
+        cursor = DB.execute_sql("""
+                        SELECT COLUMN_NAME
+                        FROM INFORMATION_SCHEMA.COLUMNS
+                        WHERE TABLE_SCHEMA = DATABASE()
+                        AND TABLE_NAME = 'tenant_llm'
+                        AND COLUMN_NAME = 'id'
+                    """)
+        if cursor.fetchone():
+            return
 
-            # 1. Add nullable column
+        # 1. Add nullable column if a previous migration attempt did not already add it.
+        cursor = DB.execute_sql("""
+                        SELECT COLUMN_NAME
+                        FROM INFORMATION_SCHEMA.COLUMNS
+                        WHERE TABLE_SCHEMA = DATABASE()
+                        AND TABLE_NAME = 'tenant_llm'
+                        AND COLUMN_NAME = 'temp_id'
+                    """)
+        if not cursor.fetchone():
             DB.execute_sql("ALTER TABLE tenant_llm ADD COLUMN temp_id INT NULL")
 
-            # 2. Set ID using MySQL user variables
-            DB.execute_sql("SET @row = 0;")
-            DB.execute_sql("UPDATE tenant_llm SET temp_id = (@row := @row + 1) ORDER BY tenant_id, llm_factory, llm_name;")
+        # 2. Fill IDs row by row. PolarDB-X rejects UPDATE ALL and MySQL user
+        # variables, so avoid "UPDATE ... SET temp_id = (@row := @row + 1)".
+        cursor = DB.execute_sql("SELECT COALESCE(MAX(temp_id), 0) FROM tenant_llm")
+        max_temp_id = cursor.fetchone()[0] or 0
+        cursor = DB.execute_sql("""
+            SELECT tenant_id, llm_factory, llm_name
+            FROM tenant_llm
+            WHERE temp_id IS NULL
+            ORDER BY tenant_id, llm_factory, llm_name
+        """)
+        for offset, (tenant_id, llm_factory, llm_name) in enumerate(cursor.fetchall(), start=1):
+            DB.execute_sql(
+                "UPDATE tenant_llm SET temp_id=%s WHERE tenant_id=%s AND llm_factory=%s AND llm_name=%s",
+                (max_temp_id + offset, tenant_id, llm_factory, llm_name),
+            )
 
-            # 3. Drop old primary key
-            DB.execute_sql("ALTER TABLE tenant_llm DROP PRIMARY KEY")
+        cursor = DB.execute_sql("SELECT COUNT(*) FROM tenant_llm WHERE temp_id IS NULL")
+        if cursor.fetchone()[0] > 0:
+            raise RuntimeError("Failed to populate tenant_llm.temp_id for all rows")
 
-            # 4. Update ID column to primary key with AUTO_INCREMENT
-            DB.execute_sql("""
+        # 3. Drop old composite primary key.
+        DB.execute_sql("ALTER TABLE tenant_llm DROP PRIMARY KEY")
+
+        # 4. Rename temp_id and set it as AUTO_INCREMENT primary key in one DDL.
+        # PolarDB-X accepts CHANGE COLUMN, while RENAME COLUMN can leave invalid
+        # metadata where PRIMARY KEY references id but the id column is invisible.
+        DB.execute_sql("ALTER TABLE tenant_llm CHANGE COLUMN temp_id id INT NOT NULL AUTO_INCREMENT PRIMARY KEY")
+
+        # 5. Preserve the previous uniqueness contract.
+        DB.execute_sql("""
             ALTER TABLE tenant_llm
-            MODIFY COLUMN temp_id INT NOT NULL AUTO_INCREMENT PRIMARY KEY
-            """)
+            ADD CONSTRAINT uk_tenant_llm UNIQUE (tenant_id, llm_factory, llm_name)
+        """)
 
-            # 5. Add unique key
-            DB.execute_sql("""
-                ALTER TABLE tenant_llm
-                ADD CONSTRAINT uk_tenant_llm UNIQUE (tenant_id, llm_factory, llm_name)
-            """)
-
-            # 6. rename
-            DB.execute_sql("ALTER TABLE tenant_llm RENAME COLUMN temp_id TO id")
-
-            logging.info("Successfully updated tenant_llm to id primary key.")
+        logging.info("Successfully updated tenant_llm to id primary key.")
 
     except Exception as e:
-        logging.error(str(e))
-        cursor = DB.execute_sql("""
-                                    SELECT COLUMN_NAME
-                                    FROM INFORMATION_SCHEMA.COLUMNS
-                                    WHERE TABLE_SCHEMA = DATABASE()
-                                    AND TABLE_NAME = 'tenant_llm'
-                                    AND COLUMN_NAME = 'temp_id'
-                                """)
-        if cursor.rowcount > 0:
-            DB.execute_sql("ALTER TABLE tenant_llm DROP COLUMN temp_id")
+        logging.exception("Failed to update tenant_llm to id primary key: %s", e)
+        raise
 
 
 def _update_tenant_llm_to_id_primary_key_postgres():
@@ -1623,6 +1634,9 @@ def migrate_db():
     alter_db_add_column(migrator, "canvas_template", "canvas_category", CharField(max_length=32, null=False, default="agent_canvas", help_text="agent_canvas|dataflow_canvas", index=True))
     alter_db_add_column(migrator, "canvas_template", "canvas_types", ListField(null=True, default=list, help_text="Canvas types"))
     alter_db_add_column(migrator, "knowledgebase", "pipeline_id", CharField(max_length=32, null=True, help_text="Pipeline ID", index=True))
+    alter_db_add_column(migrator, "knowledgebase", "time_weight", FloatField(default=0.0))
+    alter_db_add_column(migrator, "knowledgebase", "importance_level", FloatField(default=0.0))
+    alter_db_add_column(migrator, "knowledgebase", "custom_weight", FloatField(default=0.0))
     alter_db_add_column(migrator, "document", "pipeline_id", CharField(max_length=32, null=True, help_text="Pipeline ID", index=True))
     alter_db_add_column(migrator, "knowledgebase", "graphrag_task_id", CharField(max_length=32, null=True, help_text="Gragh RAG task ID", index=True))
     alter_db_add_column(migrator, "knowledgebase", "raptor_task_id", CharField(max_length=32, null=True, help_text="RAPTOR task ID", index=True))

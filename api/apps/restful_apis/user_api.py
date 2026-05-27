@@ -20,11 +20,9 @@ import re
 import secrets
 import time
 from datetime import datetime
-import base64
 from common.misc_utils import get_uuid
 from quart import make_response, redirect, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
-import requests
 import urllib.parse
 from api.apps.auth import get_auth_client
 from api.db import FileType, UserTenantRole
@@ -66,10 +64,6 @@ from common.constants import StatusEnum
 import os
 
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:9222')
-LAVA_USERINFO_URL = os.environ.get(
-    'LAVA_USERINFO_URL',
-    'http://10.210.162.32/LAVAPlatform/permission/getCurrentUserInfo'
-)
 
 
 @manager.route("/auth/login", methods=["POST"])  # noqa: F821
@@ -148,88 +142,86 @@ async def login():
             message="Email and password do not match!",
         )
 
-AES_KEY = b"Comac.0000000000"
-from Crypto.Cipher import AES
-
-def decrypt_token(encrypted_token: str) -> dict:
-    # URL-safe Base64 解码
-    encrypted_bytes = base64.urlsafe_b64decode(encrypted_token + '==')  # 补padding
-
-    # AES ECB 解密（Java 默认 AES/ECB/PKCS5Padding）
-    cipher = AES.new(AES_KEY, AES.MODE_ECB)
-    decrypted_bytes = cipher.decrypt(encrypted_bytes)
-
-    # 去除 PKCS5 padding
-    pad_len = decrypted_bytes[-1]
-    decrypted_bytes = decrypted_bytes[:-pad_len]
-
-    return json.loads(decrypted_bytes.decode('utf-8'))
-
 @manager.route('/sso/callback', methods=['GET'])
 async def sso_callback():
     token = request.args.get('token', '').strip()
+    platform = request.args.get('platform', 'lava').strip()
+    client_ip = request.remote_addr or "unknown"
 
     if not token:
-        return redirect(f'{FRONTEND_URL}/login')
+        return redirect(f'{FRONTEND_URL}/login?error=missing_token')
 
-    employee_id = None
-    display_name = None
-    department_name = ''
-    nickname = None
+    provider = settings.SSO_PROVIDERS.get(platform)
+    if not provider:
+        logging.getLogger("sso").warning(
+            "SSO callback: unknown platform=%s ip=%s", platform, client_ip
+        )
+        return redirect(f'{FRONTEND_URL}/login?error=unknown_platform')
+
+    userinfo_url = provider.get('userinfo_url')
+    if not userinfo_url:
+        return redirect(f'{FRONTEND_URL}/login?error=provider_misconfigured')
+
+    auth_header_template = provider.get('auth_header', 'Bearer {token}')
+    auth_token_value = auth_header_template.replace('{token}', token)
+
+    employee_id_field = provider.get('employee_id_field', 'data.User.login_name')
+    name_field = provider.get('name_field')
+    login_enabled_field = provider.get('login_enabled_field')
+    timeout = int(provider.get('timeout', 15))
 
     try:
-        payload = decrypt_token(token)
-
-        # 甲方加密 token 字段
-        employee_id = str(payload.get('usernumber', '')).strip()          # 工号
-        display_name = str(payload.get('username', '')).strip()           # 姓名
-        department_name = str(payload.get('department_name', '')).strip() # 部门名
-
-        if not employee_id:
-            return redirect(f'{FRONTEND_URL}/login?error=missing_usernumber')
-
-        if not display_name:
-            display_name = employee_id
-
-        nickname = f"{display_name}（{department_name}）" if department_name else display_name
-
-        # 校验时间戳，5 分钟内有效
-        timestamp = payload.get('timestamp', 0)
-        if abs(time.time() * 1000 - timestamp) > 5 * 60 * 1000:
-            return redirect(f'{FRONTEND_URL}/login?error=token_expired')
-
+        resp = await async_request(
+            'GET', userinfo_url,
+            auth_token=auth_token_value,
+            request_timeout=timeout,
+        )
+        result = resp.json()
     except Exception:
-        # 解密失败，走原来的 Bearer token 流程
-        try:
-            resp = requests.get(
-                LAVA_USERINFO_URL,
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=10
-            )
-            result = resp.json()
+        logging.getLogger("sso").error(
+            "SSO callback: platform=%s url=%s call failed. ip=%s",
+            platform, userinfo_url, client_ip
+        )
+        return redirect(f'{FRONTEND_URL}/login?error=auth_failed')
 
-            if not result.get('success'):
-                return redirect(f'{FRONTEND_URL}/login?error=auth_denied')
+    def _get_nested(data, dotted_path):
+        if not dotted_path:
+            return None
+        for key in dotted_path.split('.'):
+            if isinstance(data, dict) and key in data:
+                data = data[key]
+            else:
+                return None
+        return data
 
-            user_data = result['data']['User']
-            employee_id = user_data.get('login_name')
-            display_name = user_data.get('name') or employee_id
-            nickname = display_name
+    if not _get_nested(result, 'success'):
+        return redirect(f'{FRONTEND_URL}/login?error=auth_denied')
 
-            if user_data.get('logon_lock') or not user_data.get('logon_enabled'):
-                return redirect(f'{FRONTEND_URL}/login?error=account_locked')
+    if login_enabled_field and _get_nested(result, login_enabled_field) is False:
+        return redirect(f'{FRONTEND_URL}/login?error=account_locked')
 
-        except Exception:
-            return redirect(f'{FRONTEND_URL}/login?error=auth_failed')
-
+    employee_id = _get_nested(result, employee_id_field)
+    if employee_id is not None:
+        employee_id = str(employee_id).strip()
     if not employee_id:
-        return redirect(f'{FRONTEND_URL}/login?error=missing_user')
+        return redirect(f'{FRONTEND_URL}/login?error=missing_employee_id')
 
-    if not nickname:
-        nickname = employee_id
+    display_name = None
+    if name_field:
+        display_name = _get_nested(result, name_field)
+        if display_name:
+            display_name = str(display_name).strip()
+    if not display_name:
+        display_name = employee_id
 
-    email = f"{employee_id}@sso.internal"
+    nickname = display_name
+
+    email = f"sso_{platform}_{employee_id}@sso.internal"
     users = UserService.query(email=email, status=StatusEnum.VALID.value)
+
+    if not users:
+        old_email = f"{employee_id}@sso.internal"
+        users = UserService.query(email=old_email, status=StatusEnum.VALID.value)
 
     if not users:
         user_id = get_uuid()
@@ -237,23 +229,29 @@ async def sso_callback():
             "email": email,
             "nickname": nickname,
             "password": "",
-            "login_channel": "sso",
+            "login_channel": f"sso:{platform}",
             "status": StatusEnum.VALID.value,
             "is_superuser": False,
         })
 
         if not user:
+            logging.getLogger("sso").error(
+                "SSO callback: failed to create user. platform=%s employee_id=%s ip=%s",
+                platform, employee_id, client_ip
+            )
             return redirect(f'{FRONTEND_URL}/login?error=create_user_failed')
 
         users = UserService.query(email=email, status=StatusEnum.VALID.value)
-
         if not users:
             return redirect(f'{FRONTEND_URL}/login?error=create_user_failed')
 
     user = users[0]
-
+    if user.email != email:
+        user.email = email
     if user.nickname != nickname:
         user.nickname = nickname
+    if user.login_channel != f"sso:{platform}":
+        user.login_channel = f"sso:{platform}"
 
     user.access_token = get_uuid()
     login_user(user)
@@ -261,10 +259,13 @@ async def sso_callback():
     user.update_date = datetime_format(datetime.now())
     user.save()
 
-    jwt_token = user.get_id()
-    params = urllib.parse.urlencode({'auth': jwt_token})
+    logging.getLogger("sso").info(
+        "SSO login success: platform=%s employee_id=%s ip=%s user_id=%s",
+        platform, employee_id, client_ip, user.id
+    )
 
-    return redirect(f'{FRONTEND_URL}/login?{params}')
+    jwt_token = user.get_id()
+    return redirect(f'{FRONTEND_URL}/login?{urllib.parse.urlencode({"auth": jwt_token})}')
 
 @manager.route("/auth/login/channels", methods=["GET"])  # noqa: F821
 async def get_login_channels():
