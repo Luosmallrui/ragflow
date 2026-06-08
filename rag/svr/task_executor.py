@@ -104,7 +104,15 @@ from rag.utils.table_es_metadata import (
 BATCH_SIZE = 64
 
 
+def _normalize_preprocess_model_name(model_name=""):
+    model_name = (model_name or "").strip()
+    if "__" in model_name:
+        return model_name.split("__", 1)[0]
+    return model_name
+
+
 def _append_preprocess_llm_args(cmd, api_base="", api_key="", model_name=""):
+    model_name = _normalize_preprocess_model_name(model_name)
     if api_base:
         cmd.extend(["--base-url", api_base])
     if api_key:
@@ -937,6 +945,19 @@ async def run_dataflow(task: dict):
                                             logging.info("[Preprocess] {}".format(line))
                                     else:
                                         logging.info("[Preprocess] {}".format(line))
+                                        if any(k in line for k in [
+                                            "PARAGRAPH_CHUNKS",
+                                            "STEP 0",
+                                            "STEP 1",
+                                            "STEP 2",
+                                            "TABLE_PIPELINE",
+                                            "MERGE BLOCKS",
+                                            "CANDIDATE_TO_MD",
+                                            "Generated:",
+                                            "Converted",
+                                            "DONE",
+                                        ]):
+                                            set_progress(task_id, prog=None, msg="[Preprocess] " + line[:200])
                             proc.wait()
                             return proc.returncode, proc.stderr.read() if proc.stderr else ""
 

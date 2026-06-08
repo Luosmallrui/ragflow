@@ -44,8 +44,8 @@ from common.constants import MAXIMUM_PAGE_NUMBER
 
 # tiktoken for long random string filtering (ref: SmartResume should_remove strategy)
 try:
-    import tiktoken
-    _tiktoken_encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
+    from common.token_utils import get_tiktoken_encoder
+    _tiktoken_encoding = get_tiktoken_encoder("cl100k_base")
 except ImportError:
     _tiktoken_encoding = None
 

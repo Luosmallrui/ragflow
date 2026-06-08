@@ -14,16 +14,30 @@
 #  limitations under the License.
 #
 
-
 import os
-import tiktoken
 
 from common.file_utils import get_project_base_directory
 
-tiktoken_cache_dir = get_project_base_directory()
-os.environ["TIKTOKEN_CACHE_DIR"] = tiktoken_cache_dir
+
+def ensure_tiktoken_cache():
+    """Force tiktoken to use the bundled cache file in offline deployments."""
+    tiktoken_cache_dir = os.environ.get("TIKTOKEN_CACHE_DIR") or get_project_base_directory()
+    os.environ["TIKTOKEN_CACHE_DIR"] = tiktoken_cache_dir
+    return tiktoken_cache_dir
+
+
+ensure_tiktoken_cache()
+
+import tiktoken
+
+
+def get_tiktoken_encoder(encoding_name="cl100k_base"):
+    ensure_tiktoken_cache()
+    return tiktoken.get_encoding(encoding_name)
+
+
 # encoder = tiktoken.encoding_for_model("gpt-3.5-turbo")
-encoder = tiktoken.get_encoding("cl100k_base")
+encoder = get_tiktoken_encoder("cl100k_base")
 
 
 def num_tokens_from_string(string: str) -> int:
